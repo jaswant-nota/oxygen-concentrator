@@ -1,0 +1,546 @@
+/**********************************************************************
+ * Software License Agreement
+ *
+ * The software supplied herewith by Microchip Technology Incorporated
+ * (the “Company”) for its PIC® Microcontroller is intended and
+ * supplied to you, the Company’s customer, for use solely and
+ * exclusively on Microchip PIC® Microcontroller products. The
+ * software is owned by the Company and/or its supplier, and is
+ * protected under applicable copyright laws. All rights are reserved.
+ * Any use in violation of the foregoing restrictions may subject the
+ * user to criminal sanctions under applicable laws, as well as to
+ * civil liability for the breach of the terms and conditions of this
+ * license.
+ *
+ * THIS SOFTWARE IS PROVIDED IN AN “AS IS” CONDITION. NO WARRANTIES,
+ * WHETHER EXPRESS, IMPLIED OR STATUTORY, INCLUDING, BUT NOT LIMITED
+ * TO, IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A
+ * PARTICULAR PURPOSE APPLY TO THIS SOFTWARE. THE COMPANY SHALL NOT,
+ * IN ANY CIRCUMSTANCES, BE LIABLE FOR SPECIAL, INCIDENTAL OR
+ * CONSEQUENTIAL DAMAGES, FOR ANY REASON WHATSOEVER.
+ *
+ **********************************************************************
+/* 16F628 Oxgen Concentrator Controller                                                    
+/*                                                                                    
+/* Author  : Jaswant Nota                                                          
+/* Company : Github                                               
+/* Version : 1.0                                                                   
+/* Date    : 03/05/2021                                                              
+/*                                                                                    
+
+#include <htc.h>                // header file with compiler macros, for
+                                // example __CONFIG
+                                // the processor header file, with register 
+                                // and bit definitions (pic16f887.h) is
+                                // automatically included
+
+
+// __CONFIG sets the PIC16F628 Configuration Words.  See bottom of the header
+// file pic16f684.h for fuse option constants.
+	 __CONFIG(CP_OFF & CPD_OFF & BOREN_OFF & MCLRE_OFF & WDTE_OFF & PWRTE_ON & FCMEN_OFF & IESO_OFF & FOSC_INTOSCIO);
+
+// function prototypes
+void init_io(void);
+void init_adc(void);
+void delay(int);
+
+// Using Internal Clock of 4 Mhz
+#define FOSC 4000000L
+
+//PWM variables
+unsigned char pulse_max=0;
+unsigned char pulse_top=0;
+unsigned char top_value_1 = 0;
+unsigned char top_value_2 = 0;
+unsigned char top_value_3 = 0;
+unsigned char top_value_4 = 0;
+unsigned char top_value_5 = 0;
+unsigned char top_value_6 = 0;
+
+//Timer variables
+unsigned long timer_1 =0;
+unsigned tim1 = 0;
+unsigned tim2 = 0;
+#define timer_value 180000
+// From 200000
+unsigned char targetPres;
+unsigned counter1 = 0;
+unsigned counter2 = 0;
+unsigned startFactor = 25; 
+unsigned tStart;
+
+//Servo definitions
+#define MAX_VALUE 70
+#define CCW_ROTATION MAX_VALUE - 9
+#define CW_ROTATION MAX_VALUE - 2
+#define SERVO_CLOSE MAX_VALUE -7.5
+#define SERVO_OPEN MAX_VALUE -3
+#define SERVO_OPEN_2 MAX_VALUE -6.0
+#define STOP_ROTATION MAX_VALUE
+#define THRESHOLD_VALUE 50
+
+//servo max range - 9 to - 2
+//servo 90deg -7 and -5
+struct adc_result
+    {
+    char value;         // ADC built-in functions default to 8 bit result.
+    unsigned new_flag:1;// 1-bit flag to indicate a new (fresh) value
+    } adc_conversion;
+
+void init_io(void)
+{
+    TRISA2 = 0;
+	TRISA4 = 0;
+	TRISA5 = 0;
+// set up PORTA so RC0 is an input for the ADC
+
+    TRISC0 = 1;   // bit 0 = output, 1 = input
+	TRISC1 = 0;
+	TRISC2 = 0;
+	TRISC3 = 0;
+	TRISC4 = 0;
+	TRISC5 = 0;
+}
+
+void init_adc(void)
+{
+    // Set up RA0 as the only analog input
+    ANSEL = 0;  // all ANx pins digital
+//    ANSELH = 0;
+    ANS4 = 1;   // AN4 (RC0) analog
+    // use VDD and VSS as the references
+    VCFG = 0;  // in ADCON1 register
+    // Set justification
+    ADFM = 0;   // left justfified
+
+
+    // Set channel for conversion to AN4 (on RC0)
+      ADCON0 = 0b00010001;
+	  CHS2 = 1;
+	  CHS1 = 0;
+	  CHS0 = 0;
+	  ADON = 1;		
+    // start the first conversion
+    GO = 1;
+
+    // Timer 0 runs off internal clock
+		// it will be used for pwm
+        // It will also be used to start an ADC conversion 
+		
+//    OPTION_REG = 0b10000111;    // configure Timer0
+	OPTION_REG = 0b10000000;
+    T0IF = 0;               // ensure Timer0 Interrupt flag is clear
+    T0IE = 1;               // enable Timer0 interrupts
+	TMR0 =156;
+	//Timer 2
+	
+//	T2CON = 0b00000100;
+//	TMR2IF = 0;
+//	TMR2IE = 1;
+//	TMR2= 156;
+//	PR2=255;
+	GIE=1;
+
+
+}
+
+// This function will be called on an interrupt
+
+
+void interrupt interrupt_service(void)
+{
+    if (T0IE && T0IF)
+        { // Timer0 Interrupt
+        // channel is always set to AN0.  Otherwise we might change
+        // it here
+    
+		pulse_max++;            // Pulse Max Increment
+  		pulse_top++;            // Pulse Top Increment
+		timer_1++;
+
+		
+		
+
+		/* MAX_VALUE=200 turn off the pulse */
+ 		 if (pulse_max >= MAX_VALUE) {
+   		 pulse_max=0;
+   		 pulse_top=0;
+       	 RA2=0;                // Turn off RA2
+		 RA4=0;                // Turn off RA4
+		 RA5=0;
+		 RC3=0;
+		 RC2=0;
+		 RC4=0;
+
+        // Get last conversion result every 20ms
+        adc_conversion.value = ADRESH;  // 8 MSBs
+        adc_conversion.new_flag = 1;    // new value
+        
+        // start next conversion
+        GO = 1;
+		
+		
+		}
+
+ 		    	/* top_value = MAX_VALUE - n, n=10: 10 x 0.1ms = 1.0ms, n=20: 20 x 0.1ms = 2.0ms */
+   		/* 2ms -> CCW Rotation, 1ms -> CW Rotation */
+
+		
+
+
+		if (pulse_top == top_value_1) {
+      	 RA2=1;                // Turn On RA2
+    	}
+
+    	if (pulse_top == top_value_2) {
+      	 RA4=1;                // Turn On RA4
+
+    	}
+
+
+	
+		if (pulse_top == top_value_3) {
+      	 RC3=1;                // Turn On RC3
+    	}
+	
+		if (pulse_top == top_value_4) {
+      	 RC2=1;                // Turn On RC2
+    	}
+
+		if (pulse_top == top_value_5) {
+      	 RA5=1;                // Turn On RA5
+
+    	}
+		if (pulse_top == top_value_6) {
+      	 RC4=1;                // Turn On RC4
+    	}
+
+    
+	
+    	TMR0 = 156;             // Initial Value for 0.1ms Interrupt
+        T0IF = 0;       // clear Timer0 interrupt flag
+    	
+	}
+}
+
+
+
+void delay(int d)
+{
+    int i;  // Declare variable to be used in the loop
+
+    while(d)    // While d > 0
+    {
+        i = 100;    // set i to 100 for inner loop
+        while(i)    // while i > 0
+        {
+            i--;    // decrement i (e.g. i will equal 99, 98, 97,...)  
+        }
+        d--;    // decrement d
+    }
+}
+
+
+void main()
+{
+      char bars = 0;           // used to compute the number of LED "bars" to display
+	  char index = 1;
+
+    // initialize global variables
+    adc_conversion.value = 0;
+    adc_conversion.new_flag = 0;
+
+    // Set up MCU
+    init_io();
+    init_adc();
+    
+    ei();                   // enable global interrupts
+
+ 	/* Init Servo Pulse */
+  	pulse_max=0;
+  	pulse_top=0;
+  	top_value_1 = SERVO_CLOSE; // top_value on servo 1 = CLOSE;
+	top_value_2 = SERVO_CLOSE; // top_value on servo 2 = CLOSE;
+	top_value_3 = SERVO_CLOSE;
+	top_value_4 = SERVO_CLOSE;
+	top_value_5 = SERVO_CLOSE;
+	top_value_6 = SERVO_CLOSE;
+	timer_1=0;
+	tim1=0;
+	tim2=0;
+
+
+    while(1)
+    {
+        // look for a new conversion result
+        if (adc_conversion.new_flag == 1)
+        { 
+            bars = adc_conversion.value;
+            adc_conversion.new_flag = 0;        // reset flag
+
+/*
+			//bars = 0;
+			if (bars & 0b10000000)
+			//{RA2 = 1;}
+			if (bars & 0b01000000)
+			//{RA4 = 1;}
+			if (bars & 0b00100000)
+			{RA5 = 1;}
+			if (bars & 0b00010000)
+			{RC1 = 1;}
+			if (bars & 0b00001000)
+			{RC2 = 1;}
+			if (bars & 0b00000100)
+			{RC3 = 1;}
+			if (bars & 0b00000010)
+			{RC4 = 1;}
+			if (bars & 0b00000001)
+			{RC5 = 1;}
+			 
+			delay(150);
+
+		    //RA2=0;
+			//RA4=0;
+			RA5=0;
+			RC1=0;
+			RC2=0;
+			RC3=0;
+			RC4=0;
+			RC5=0;
+			
+			delay(150);
+	    */
+
+		//	RC1
+		//	RC2
+}
+
+	
+		
+		if(timer_1 >= timer_value/2){
+			tim1 = 1;
+		//	tStart= (timer_value/startFactor) + (timer_value/2);
+		}
+ 
+		if(timer_1 >= timer_value){
+			timer_1=0;
+  			tim1 = 0;
+		}
+
+		if(timer_1 <= timer_value/4){
+			tim2 = 0;
+		}
+
+		
+		if(timer_1 >= timer_value/6 + 0*timer_value/150){
+			tim2 = 1;
+		}
+
+		if(timer_1 >= timer_value/6 + 1*timer_value/150){
+			tim2 = 0;
+		}
+
+	    if(timer_1 >= timer_value/6 + 2*timer_value/150){
+			tim2 = 1;
+		}
+
+		if(timer_1 >= timer_value/6 + 3*timer_value/150){
+			tim2 = 0;
+		}
+
+		if(timer_1 >= timer_value/6 + 4*timer_value/150){
+			tim2 = 1;
+		}
+
+		if(timer_1 >= timer_value/6 + 5*timer_value/150){
+			tim2 = 0;
+		}
+
+		if(timer_1 >= timer_value/6 + 13*timer_value/150){
+			tim2 = 1;
+		}
+
+		if(timer_1 >= timer_value/6 + 14*timer_value/150){
+			tim2 = 0;
+		}
+
+	    if(timer_1 >= timer_value/6 + 15*timer_value/150){
+			tim2 = 1;
+		}
+
+		if(timer_1 >= timer_value/6 + 16*timer_value/150){
+			tim2 = 0;
+		}
+
+		if(timer_1 >= timer_value/6 + 17*timer_value/150){
+			tim2 = 1;
+		}
+
+		if(timer_1 >= timer_value/6 + 18*timer_value/150){
+			tim2 = 0;
+		}
+
+		if(timer_1 >= timer_value/6 + 26*timer_value/150){
+			tim2 = 1;
+		}
+
+		if(timer_1 >= timer_value/6 + 27*timer_value/150){
+			tim2 = 0;
+		}
+
+	    if(timer_1 >= timer_value/6 + 28*timer_value/150){
+			tim2 = 1;
+		}
+
+		if(timer_1 >= timer_value/6 + 29*timer_value/150){
+			tim2 = 0;
+		}
+
+		if(timer_1 >= timer_value/6 + 30*timer_value/150){
+			tim2 = 1;
+		}
+
+		if(timer_1 >= timer_value/6 + 31*timer_value/150){
+			tim2 = 0;
+		}
+
+	
+
+
+  
+// Second Cylinder
+
+		if(timer_1 >= timer_value*2/3 + 0*timer_value/150){
+			tim2 = 1;
+		}
+
+		if(timer_1 >= timer_value*2/3 + 1*timer_value/150){
+			tim2 = 0;
+		}
+
+	    if(timer_1 >= timer_value*2/3 + 2*timer_value/150){
+			tim2 = 1;
+		}
+
+		if(timer_1 >= timer_value*2/3 + 3*timer_value/150){
+			tim2 = 0;
+		}
+
+		if(timer_1 >= timer_value*2/3 + 4*timer_value/150){
+			tim2 = 1;
+		}
+
+		if(timer_1 >= timer_value*2/3 + 5*timer_value/150){
+			tim2 = 0;
+		}
+
+		if(timer_1 >= timer_value*2/3 + 13*timer_value/150){
+			tim2 = 1;
+		}
+
+		if(timer_1 >= timer_value*2/3 + 14*timer_value/150){
+			tim2 = 0;
+		}
+
+	    if(timer_1 >= timer_value*2/3 + 15*timer_value/150){
+			tim2 = 1;
+		}
+
+		if(timer_1 >= timer_value*2/3 + 16*timer_value/150){
+			tim2 = 0;
+		}
+
+		if(timer_1 >= timer_value*2/3 + 17*timer_value/150){
+			tim2 = 1;
+		}
+
+		if(timer_1 >= timer_value*2/3 + 18*timer_value/150){
+			tim2 = 0;
+		}
+		if(timer_1 >= timer_value*2/3 + 26*timer_value/150){
+			tim2 = 1;
+		}
+
+		if(timer_1 >= timer_value*2/3 + 27*timer_value/150){
+			tim2 = 0;
+		}
+
+	    if(timer_1 >= timer_value*2/3 + 28*timer_value/150){
+			tim2 = 1;
+		}
+
+		if(timer_1 >= timer_value*2/3 + 29*timer_value/150){
+			tim2 = 0;
+		}
+
+		if(timer_1 >= timer_value*2/3 + 30*timer_value/150){
+			tim2 = 1;
+		}
+
+		if(timer_1 >= timer_value*2/3 + 31*timer_value/150){
+			tim2 = 0;
+		}
+
+
+	
+
+		    targetPres = 0b01011101; // 80PSI
+
+
+			if (tim1==0) {
+				
+				top_value_2 = SERVO_OPEN;
+				top_value_3 = SERVO_OPEN;
+				top_value_4 = SERVO_CLOSE;
+				top_value_6 = SERVO_CLOSE;
+
+				if (bars <= targetPres & top_value_1 > SERVO_CLOSE ){
+				top_value_1 =  top_value_1 - 1;
+				}
+
+				if (bars >= targetPres & top_value_1 < SERVO_OPEN ){
+				top_value_1 = top_value_1 + 1;
+
+				}
+
+
+				if (tim2==0){  
+				top_value_5 = SERVO_CLOSE;} 
+				
+                if (tim2==1){  
+				top_value_5 = SERVO_OPEN_2;} 
+
+
+			
+			}
+			    if (tim1==1) {
+				
+				top_value_1	= SERVO_OPEN;
+				top_value_3 = SERVO_CLOSE;	
+				top_value_4 = SERVO_OPEN;
+				top_value_5 = SERVO_CLOSE;
+ 				
+				if (bars <= targetPres & top_value_2 > SERVO_CLOSE ){
+				top_value_2 =  top_value_2 - 1;
+					}
+
+				if (bars >= targetPres & top_value_2 < SERVO_OPEN ){
+				top_value_2 = top_value_2 + 1;
+					}
+
+				if (tim2==0){  
+				top_value_6 = SERVO_CLOSE;} 
+
+                if (tim2==1){  
+				top_value_6 = SERVO_OPEN_2;} 
+
+
+    			} 
+
+	} 
+
+}
+
+
+
+
