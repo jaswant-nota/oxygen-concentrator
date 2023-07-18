@@ -1,4 +1,4 @@
-This project goal was to develop an oxygen concentrator using the 8 bit PICF628 microcontroller. 
+This project goal was to develop an oxygen concentrator using the 8 bit PIC16F628 microcontroller. 
 A design was developed with an oxygen concentration of 93.4% and over at high flow rates.
 This design could be rapidly manuafactured and used in low resource settings around the globe.
 Jaswant Nota
